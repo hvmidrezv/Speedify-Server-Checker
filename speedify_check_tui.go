@@ -21,7 +21,6 @@ import (
 	"flag"
 	"fmt"
 	"math"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,6 +37,8 @@ import (
 	domain "speedify-check/internal/model"
 
 	"speedify-check/internal/geo"
+
+	"speedify-check/internal/probe"
 )
 
 // ======================================================================
@@ -298,40 +299,9 @@ func getServers(ctx context.Context) ([]Server, error) {
 // probing & stats
 // ======================================================================
 
-func probe() (time.Duration, bool) {
-	t := time.Now()
-	c, err := net.DialTimeout("tcp", *probeAddr, *probeTimeout)
-	if err != nil {
-		return 0, false
-	}
-	d := time.Since(t)
-	c.Close()
-	return d, true
-}
-
-func rttStats(v []float64) (min, avg, max, jit float64) {
-	if len(v) == 0 {
-		return
-	}
-	min = math.MaxFloat64
-	sum := 0.0
-	for i, x := range v {
-		sum += x
-		if x < min {
-			min = x
-		}
-		if x > max {
-			max = x
-		}
-		if i > 0 {
-			jit += math.Abs(x - v[i-1])
-		}
-	}
-	avg = sum / float64(len(v))
-	if len(v) > 1 {
-		jit /= float64(len(v) - 1)
-	}
-	return
+// tcpProbe dials the probe target once through the current tunnel.
+func tcpProbe() (time.Duration, bool) {
+	return probe.NewTCP(*probeAddr, *probeTimeout).Probe(context.Background())
 }
 
 // ======================================================================
@@ -424,7 +394,7 @@ func attempt(ctx context.Context, s Server, emit func(tea.Msg)) Result {
 			r.Reason = fmt.Sprintf("dropped to %s at %.1fs", st, el)
 			break
 		}
-		d, ok := probe()
+		d, ok := tcpProbe()
 		if ok {
 			ms := float64(d.Microseconds()) / 1000
 			rtts = append(rtts, ms)
@@ -437,7 +407,7 @@ func attempt(ctx context.Context, s Server, emit func(tea.Msg)) Result {
 		}
 	}
 
-	r.MinMs, r.AvgMs, r.MaxMs, r.JitterMs = rttStats(rtts)
+	r.MinMs, r.AvgMs, r.MaxMs, r.JitterMs = probe.Stats(rtts)
 
 	if r.Reason == "" && r.ProbeLoss > *maxLoss {
 		r.Category = "loss"
