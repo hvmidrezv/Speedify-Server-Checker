@@ -36,6 +36,8 @@ import (
 	// Aliased because this file declares its own Bubble Tea "model"
 	// struct; the alias disappears when the UI moves to internal/tui.
 	domain "speedify-check/internal/model"
+
+	"speedify-check/internal/geo"
 )
 
 // ======================================================================
@@ -189,50 +191,13 @@ type country struct {
 	Selected bool
 }
 
-var countryNames = map[string]string{
-	"ae": "United Arab Emirates", "al": "Albania", "am": "Armenia", "ar": "Argentina", "at": "Austria",
-	"au": "Australia", "az": "Azerbaijan", "ba": "Bosnia & Herzegovina", "bd": "Bangladesh", "be": "Belgium",
-	"bg": "Bulgaria", "br": "Brazil", "by": "Belarus", "ca": "Canada", "ch": "Switzerland", "cl": "Chile",
-	"co": "Colombia", "cr": "Costa Rica", "cy": "Cyprus", "cz": "Czechia", "de": "Germany", "dk": "Denmark",
-	"ec": "Ecuador", "ee": "Estonia", "eg": "Egypt", "es": "Spain", "fi": "Finland", "fr": "France",
-	"gb": "United Kingdom", "uk": "United Kingdom", "ge": "Georgia", "gr": "Greece", "hk": "Hong Kong",
-	"hr": "Croatia", "hu": "Hungary", "id": "Indonesia", "ie": "Ireland", "il": "Israel", "in": "India",
-	"is": "Iceland", "it": "Italy", "jp": "Japan", "ke": "Kenya", "kr": "South Korea", "kz": "Kazakhstan",
-	"lk": "Sri Lanka", "lt": "Lithuania", "lu": "Luxembourg", "lv": "Latvia", "md": "Moldova",
-	"me": "Montenegro", "mk": "North Macedonia", "mt": "Malta", "mx": "Mexico", "my": "Malaysia",
-	"ng": "Nigeria", "nl": "Netherlands", "no": "Norway", "nz": "New Zealand", "pa": "Panama", "pe": "Peru",
-	"ph": "Philippines", "pk": "Pakistan", "pl": "Poland", "pt": "Portugal", "ro": "Romania", "rs": "Serbia",
-	"ru": "Russia", "sa": "Saudi Arabia", "se": "Sweden", "sg": "Singapore", "si": "Slovenia",
-	"sk": "Slovakia", "th": "Thailand", "tr": "Turkey", "tw": "Taiwan", "ua": "Ukraine",
-	"us": "United States", "uy": "Uruguay", "vn": "Vietnam", "za": "South Africa",
-}
-
-func countryName(code string) string {
-	if n, ok := countryNames[strings.ToLower(code)]; ok {
-		return n
-	}
-	return strings.ToUpper(code)
-}
-
-func flagEmoji(code string) string {
-	code = strings.ToUpper(code)
-	if code == "UK" {
-		code = "GB"
-	}
-	r := []rune(code)
-	if len(r) != 2 || r[0] < 'A' || r[0] > 'Z' || r[1] < 'A' || r[1] > 'Z' {
-		return "🏳"
-	}
-	return string([]rune{0x1F1E6 + (r[0] - 'A'), 0x1F1E6 + (r[1] - 'A')})
-}
-
 func buildCountries(sv []Server) []country {
 	m := map[string]*country{}
 	for _, s := range sv {
 		code := strings.ToLower(s.Country)
 		c, ok := m[code]
 		if !ok {
-			c = &country{Country: domain.Country{Code: code, Name: countryName(code), Flag: flagEmoji(code)}}
+			c = &country{Country: domain.Country{Code: code, Name: geo.CountryName(code), Flag: geo.FlagEmoji(code)}}
 			m[code] = c
 		}
 		c.Servers = append(c.Servers, s)
