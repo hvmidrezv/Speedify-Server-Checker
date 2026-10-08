@@ -7,10 +7,10 @@ BINARY := speedify-check
 .PHONY: build run test lint fmt vet tidy clean
 
 build:
-	go build -o bin/$(BINARY) .
+	go build -o bin/$(BINARY) ./cmd/speedify-check
 
 run:
-	go run .
+	go run ./cmd/speedify-check
 
 test:
 	go test -race ./...

@@ -1,11 +1,7 @@
-// Speedify Server Checker - TUI edition
-//
-// Run:
-//
-//	go run .
-//	go run . -hold 15s -retries 1 -max-loss 1
-//
-// Flow: notice -> country menu -> confirm popup -> live test screen -> ranked results
+// Command speedify-check tests Speedify VPN servers one by one in a
+// terminal UI and ranks the stable ones. It only parses flags, sets up
+// the log file and the results journal, and wires the packages
+// together; all logic lives in the internal packages.
 package main
 
 import (
