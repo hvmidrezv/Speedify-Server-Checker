@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -39,6 +38,8 @@ import (
 	"speedify-check/internal/geo"
 
 	"speedify-check/internal/probe"
+
+	"speedify-check/internal/speedify"
 )
 
 // ======================================================================
@@ -233,11 +234,10 @@ func flog(level, format string, a ...any) {
 // speedify cli helpers
 // ======================================================================
 
-func runCLI(ctx context.Context, timeout time.Duration, args ...string) (string, error) {
-	c, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	out, err := exec.CommandContext(c, *cliPath, args...).Output()
-	return strings.TrimSpace(string(out)), err
+// cliClient builds the speedify CLI client from the current flag
+// values.
+func cliClient() *speedify.Client {
+	return speedify.NewClient(speedify.NewExecRunner(*cliPath))
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) bool {
@@ -250,49 +250,15 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 }
 
 func getState(ctx context.Context) string {
-	out, _ := runCLI(ctx, 15*time.Second, "state")
-	var s string
-	if json.Unmarshal([]byte(out), &s) == nil {
-		return strings.ToUpper(s)
-	}
-	var m map[string]any
-	if json.Unmarshal([]byte(out), &m) == nil {
-		if v, ok := m["state"].(string); ok {
-			return strings.ToUpper(v)
-		}
-	}
-	return strings.ToUpper(strings.Trim(out, "\" \r\n"))
+	return cliClient().State(ctx)
 }
 
 func getExitIP(ctx context.Context) string {
-	out, _ := runCLI(ctx, 15*time.Second, "show", "currentserver")
-	var m map[string]any
-	if json.Unmarshal([]byte(out), &m) != nil {
-		return ""
-	}
-	if v, ok := m["ip"].(string); ok {
-		return v
-	}
-	return ""
+	return cliClient().CurrentServer(ctx)
 }
 
 func getServers(ctx context.Context) ([]Server, error) {
-	out, err := runCLI(ctx, 30*time.Second, "show", "servers")
-	if err != nil {
-		return nil, err
-	}
-	var data struct {
-		Public  []Server `json:"public"`
-		Private []Server `json:"private"`
-		Team    []Server `json:"team"`
-	}
-	if err := json.Unmarshal([]byte(out), &data); err != nil {
-		return nil, err
-	}
-	all := append([]Server{}, data.Public...)
-	all = append(all, data.Private...)
-	all = append(all, data.Team...)
-	return all, nil
+	return cliClient().Servers(ctx)
 }
 
 // ======================================================================
@@ -348,7 +314,7 @@ func attempt(ctx context.Context, s Server, emit func(tea.Msg)) Result {
 
 	emit(phaseMsg{Phase: "connecting"})
 	flog("DEBUG", "%s: connecting", r.Server)
-	runCLI(ctx, 60*time.Second, "connect", s.Country, s.City, fmt.Sprint(s.Num))
+	_ = cliClient().Connect(ctx, s)
 
 	start := time.Now()
 	last := ""
@@ -426,7 +392,7 @@ func testServer(ctx context.Context, s Server, emit func(tea.Msg)) Result {
 	for n := 1; n <= 1+*retries; n++ {
 		r = attempt(ctx, s, emit)
 		r.Attempts = n
-		runCLI(context.Background(), 15*time.Second, "disconnect")
+		_ = cliClient().Disconnect(context.Background())
 		if r.Stable || ctx.Err() != nil {
 			return r
 		}
@@ -467,7 +433,7 @@ func worker(ctx context.Context, todo []Server, prev []Result, ch chan<- tea.Msg
 		sleepCtx(ctx, *pause)
 	}
 
-	runCLI(context.Background(), 15*time.Second, "disconnect")
+	_ = cliClient().Disconnect(context.Background())
 	writeReports(all)
 	flog("INFO", "==== run finished: %d results ====", len(all))
 	emit(finishedMsg{All: all})
@@ -626,7 +592,7 @@ func tickCmd() tea.Cmd {
 
 func checkCmd() tea.Cmd {
 	return func() tea.Msg {
-		if _, err := exec.LookPath(*cliPath); err != nil {
+		if err := speedify.Available(*cliPath); err != nil {
 			return checkMsg{CLIFound: false, Err: err.Error()}
 		}
 		sv, err := getServers(context.Background())
@@ -646,14 +612,14 @@ func waitEvent(ch <-chan tea.Msg) tea.Cmd {
 
 func connectCmd(r Result) tea.Cmd {
 	return func() tea.Msg {
-		_, err := runCLI(context.Background(), 60*time.Second, "connect", r.Country, r.City, fmt.Sprint(r.Num))
+		err := cliClient().Connect(context.Background(), Server{Country: r.Country, City: r.City, Num: r.Num})
 		return connectedMsg{Name: r.Server, Err: err}
 	}
 }
 
 func disconnectCmd() tea.Cmd {
 	return func() tea.Msg {
-		_, err := runCLI(context.Background(), 15*time.Second, "disconnect")
+		err := cliClient().Disconnect(context.Background())
 		return disconnectedMsg{Err: err}
 	}
 }
@@ -936,7 +902,7 @@ func (m model) onKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-			exec.Command(*cliPath, "disconnect").Run()
+			cliClient().ForceDisconnect()
 			return m, tea.Quit
 		}
 		return m, tea.Quit
