@@ -25,20 +25,17 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"speedify-check/internal/geo"
+	"speedify-check/internal/logx"
 	// Aliased because this file declares its own Bubble Tea "model"
 	// struct; the alias disappears when the UI moves to internal/tui.
 	domain "speedify-check/internal/model"
-
-	"speedify-check/internal/geo"
-
 	"speedify-check/internal/probe"
-
 	"speedify-check/internal/speedify"
 )
 
@@ -216,18 +213,13 @@ func buildCountries(sv []Server) []country {
 // file log (full detail, always written)
 // ======================================================================
 
-var (
-	logFile *os.File
-	logMu   sync.Mutex
-)
+// appLog is configured by main; before that (and if the file cannot be
+// opened) it is nil and logging is a no-op.
+var appLog *logx.Logger
 
+// flog writes one leveled line to the run log.
 func flog(level, format string, a ...any) {
-	if logFile == nil {
-		return
-	}
-	logMu.Lock()
-	defer logMu.Unlock()
-	fmt.Fprintf(logFile, "%s [%-5s] %s\n", time.Now().Format("2006-01-02 15:04:05"), level, fmt.Sprintf(format, a...))
+	appLog.Logf(level, format, a...)
 }
 
 // ======================================================================
@@ -1394,10 +1386,9 @@ func main() {
 	flag.Parse()
 	os.MkdirAll(*outDir, 0o755)
 
-	if f, err := os.OpenFile(filepath.Join(*outDir, "speedify_check.log"),
-		os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
-		logFile = f
-		defer f.Close()
+	if lg, err := logx.Open(filepath.Join(*outDir, "speedify_check.log")); err == nil {
+		appLog = lg
+		defer lg.Close()
 	}
 
 	jsonl := filepath.Join(*outDir, "results.jsonl")
