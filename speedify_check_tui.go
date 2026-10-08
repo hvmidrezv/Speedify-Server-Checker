@@ -15,7 +15,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"math"
 	"os"
@@ -28,6 +27,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"speedify-check/internal/checker"
+	"speedify-check/internal/config"
 	"speedify-check/internal/geo"
 	"speedify-check/internal/logx"
 	// Aliased because this file declares its own Bubble Tea "model"
@@ -39,22 +39,8 @@ import (
 )
 
 // ======================================================================
-// flags
+// cli helpers
 // ======================================================================
-
-var (
-	cliPath        = flag.String("cli", "speedify_cli", "path to speedify_cli")
-	connectTimeout = flag.Duration("connect-timeout", 25*time.Second, "max time to wait for CONNECTED")
-	hold           = flag.Duration("hold", 10*time.Second, "how long the connection must stay stable")
-	interval       = flag.Duration("interval", time.Second, "sampling interval during hold")
-	probeAddr      = flag.String("probe", "1.1.1.1:443", "host:port for the TCP probe through the tunnel")
-	probeTimeout   = flag.Duration("probe-timeout", 2*time.Second, "TCP probe timeout")
-	maxLoss        = flag.Int("max-loss", 0, "max failed probes allowed for a server to count as stable")
-	retries        = flag.Int("retries", 0, "extra attempts for a failing server")
-	resume         = flag.Bool("resume", false, "skip servers already tested in a previous run (results.jsonl)")
-	outDir         = flag.String("out", ".", "output directory")
-	pause          = flag.Duration("pause", time.Second, "pause between servers")
-)
 
 // ======================================================================
 // styles
@@ -220,14 +206,9 @@ var appLog *logx.Logger
 // speedify cli helpers
 // ======================================================================
 
-// cliClient builds the speedify CLI client from the current flag
-// values.
-func cliClient() *speedify.Client {
-	return speedify.NewClient(speedify.NewExecRunner(*cliPath))
-}
-
-func getServers(ctx context.Context) ([]Server, error) {
-	return cliClient().Servers(ctx)
+// client builds the speedify CLI client from the current config.
+func (m model) client() *speedify.Client {
+	return speedify.NewClient(speedify.NewExecRunner(m.cfg.CLIPath))
 }
 
 // ======================================================================
@@ -272,6 +253,8 @@ type logEntry struct {
 }
 
 type model struct {
+	cfg config.Config
+
 	w, h  int
 	stage stage
 	spin  int
@@ -314,9 +297,12 @@ type model struct {
 	status     string
 }
 
-func newModel(prev []Result) model {
+// newModel builds the initial UI state for the given configuration
+// and the results of a previous run (empty when not resuming).
+func newModel(cfg config.Config, prev []Result) model {
 	return model{
-		w: 100, h: 32,
+		cfg: cfg,
+		w:   100, h: 32,
 		stage:    stNotice,
 		checking: true,
 		prev:     prev,
@@ -328,12 +314,13 @@ func tickCmd() tea.Cmd {
 	return tea.Tick(120*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
-func checkCmd() tea.Cmd {
+// checkCmd looks for the CLI and loads the server list.
+func (m model) checkCmd() tea.Cmd {
 	return func() tea.Msg {
-		if err := speedify.Available(*cliPath); err != nil {
+		if err := speedify.Available(m.cfg.CLIPath); err != nil {
 			return checkMsg{CLIFound: false, Err: err.Error()}
 		}
-		sv, err := getServers(context.Background())
+		sv, err := m.client().Servers(context.Background())
 		if err != nil {
 			return checkMsg{CLIFound: true, Err: "could not read the server list: " + err.Error()}
 		}
@@ -350,22 +337,24 @@ func waitEvent(ch <-chan domain.Event) tea.Cmd {
 	return func() tea.Msg { return eventMsg{<-ch} }
 }
 
-func connectCmd(r Result) tea.Cmd {
+// connectCmd connects interactively (results screen, Enter).
+func (m model) connectCmd(r Result) tea.Cmd {
 	return func() tea.Msg {
-		err := cliClient().Connect(context.Background(), Server{Country: r.Country, City: r.City, Num: r.Num})
+		err := m.client().Connect(context.Background(), Server{Country: r.Country, City: r.City, Num: r.Num})
 		return connectedMsg{Name: r.Server, Err: err}
 	}
 }
 
-func disconnectCmd() tea.Cmd {
+// disconnectCmd is a manual disconnect (results screen, d).
+func (m model) disconnectCmd() tea.Cmd {
 	return func() tea.Msg {
-		err := cliClient().Disconnect(context.Background())
+		err := m.client().Disconnect(context.Background())
 		return disconnectedMsg{Err: err}
 	}
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(checkCmd(), tickCmd())
+	return tea.Batch(m.checkCmd(), tickCmd())
 }
 
 // ---------- helpers on the model ----------
@@ -515,30 +504,30 @@ func (m *model) startRun() tea.Cmd {
 	m.samples = nil
 	m.curName, m.curPhase = "", ""
 	m.logs = nil
-	m.totalSamples = int(math.Ceil(float64(*hold) / float64(*interval)))
+	m.totalSamples = int(math.Ceil(float64(m.cfg.Hold) / float64(m.cfg.Interval)))
 	m.results = append([]Result{}, m.prev...)
 	m.addLog(accent("●"), fmt.Sprintf("Run started · %d servers", len(todo)))
 
-	eng := checker.New(engineConfig(), cliClient(),
-		probe.NewTCP(*probeAddr, *probeTimeout), fileRecorder{dir: *outDir}, appLog)
+	eng := checker.New(m.engineConfig(), m.client(),
+		probe.NewTCP(m.cfg.ProbeAddr, m.cfg.ProbeTimeout), fileRecorder{dir: m.cfg.OutDir}, appLog)
 	go eng.Run(ctx, todo, m.prev, func(ev domain.Event) { ch <- ev })
 	return waitEvent(ch)
 }
 
-// engineConfig maps the flag values onto the checker engine knobs,
+// engineConfig maps the configuration onto the checker engine knobs,
 // keeping the hard-coded timings of the original program (500ms state
 // polling, 2s retry delay).
-func engineConfig() checker.Config {
+func (m model) engineConfig() checker.Config {
 	return checker.Config{
-		ConnectTimeout: *connectTimeout,
-		Hold:           *hold,
-		Interval:       *interval,
-		MaxLoss:        *maxLoss,
-		Retries:        *retries,
-		Pause:          *pause,
+		ConnectTimeout: m.cfg.ConnectTimeout,
+		Hold:           m.cfg.Hold,
+		Interval:       m.cfg.Interval,
+		MaxLoss:        m.cfg.MaxLoss,
+		Retries:        m.cfg.Retries,
+		Pause:          m.cfg.Pause,
 		PollInterval:   checker.DefaultPollInterval,
 		RetryDelay:     checker.DefaultRetryDelay,
-		ProbeAddr:      *probeAddr,
+		ProbeAddr:      m.cfg.ProbeAddr,
 	}
 }
 
@@ -682,7 +671,7 @@ func (m model) onKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-			cliClient().ForceDisconnect()
+			m.client().ForceDisconnect()
 			return m, tea.Quit
 		}
 		return m, tea.Quit
@@ -700,7 +689,7 @@ func (m model) onKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "r":
 			m.checking = true
 			m.loadErr = ""
-			return m, checkCmd()
+			return m, m.checkCmd()
 		}
 
 	case stMenu:
@@ -784,11 +773,11 @@ func (m model) onKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if len(m.rank) > 0 {
 				r := m.rank[m.rcur]
 				m.status = warnS("… connecting to " + r.Server)
-				return m, connectCmd(r)
+				return m, m.connectCmd(r)
 			}
 		case "d":
 			m.status = dimS("… disconnecting")
-			return m, disconnectCmd()
+			return m, m.disconnectCmd()
 		case "r":
 			m.stage = stMenu
 			m.status = ""
@@ -959,7 +948,7 @@ func (m model) viewConfirm() string {
 			accentBold("[N]") + " Go back",
 		}
 	} else {
-		est := time.Duration(len(todo)) * (*hold + 8*time.Second)
+		est := time.Duration(len(todo)) * (m.cfg.Hold + 8*time.Second)
 		lines = []string{
 			accentBold("Ready to start?"),
 			"",
@@ -1115,9 +1104,9 @@ func (m model) viewDone() string {
 			failed[r.Category]++
 		}
 	}
-	abs, err := filepath.Abs(*outDir)
+	abs, err := filepath.Abs(m.cfg.OutDir)
 	if err != nil {
-		abs = *outDir
+		abs = m.cfg.OutDir
 	}
 	nFail := tested - len(m.rank)
 
@@ -1171,23 +1160,27 @@ func (m model) viewDone() string {
 // ======================================================================
 
 func main() {
-	flag.Parse()
-	os.MkdirAll(*outDir, 0o755)
+	cfg := config.Parse(os.Args[1:])
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+	_ = os.MkdirAll(cfg.OutDir, 0o755)
 
-	if lg, err := logx.Open(filepath.Join(*outDir, "speedify_check.log")); err == nil {
+	if lg, err := logx.Open(filepath.Join(cfg.OutDir, "speedify_check.log")); err == nil {
 		appLog = lg
 		defer lg.Close()
 	}
 
-	jsonl := filepath.Join(*outDir, "results.jsonl")
+	jsonl := filepath.Join(cfg.OutDir, "results.jsonl")
 	var prev []Result
-	if *resume {
+	if cfg.Resume {
 		prev = report.LoadJSONL(jsonl)
 	} else {
-		os.Remove(jsonl)
+		_ = os.Remove(jsonl)
 	}
 
-	p := tea.NewProgram(newModel(prev), tea.WithAltScreen())
+	p := tea.NewProgram(newModel(cfg, prev), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Println("error:", err)
 		os.Exit(1)
