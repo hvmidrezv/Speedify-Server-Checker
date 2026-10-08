@@ -1,4 +1,7 @@
-# speedify-check
+<img width="1672" height="941" alt="image" src="https://github.com/user-attachments/assets/d52f1c7f-1062-4b39-8627-b8bc76e864e2" />
+
+
+# speedify-checker
 
 A terminal UI that tests Speedify VPN servers one by one and produces a
 **ranked list of stable servers**.
