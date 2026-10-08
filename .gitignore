@@ -1,0 +1,20 @@
+# binaries
+/speedify-check
+/bin/
+*.exe
+*.test
+*.out
+
+# runtime outputs (created by the tool)
+results.jsonl
+results.json
+results.csv
+stable_servers.txt
+stable_names.txt
+speedify_check.log
+
+# editor / OS junk
+.DS_Store
+*.swp
+*~
+*:Zone.Identifier
