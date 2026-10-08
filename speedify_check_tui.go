@@ -14,10 +14,7 @@
 package main
 
 import (
-	"bufio"
 	"context"
-	"encoding/csv"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"math"
@@ -36,6 +33,7 @@ import (
 	// struct; the alias disappears when the UI moves to internal/tui.
 	domain "speedify-check/internal/model"
 	"speedify-check/internal/probe"
+	"speedify-check/internal/report"
 	"speedify-check/internal/speedify"
 )
 
@@ -414,7 +412,7 @@ func worker(ctx context.Context, todo []Server, prev []Result, ch chan<- tea.Msg
 			break
 		}
 		all = append(all, r)
-		appendJSONL(jsonl, r)
+		report.AppendJSONL(jsonl, r)
 		if r.Stable {
 			flog("OK", "%s STABLE avg=%.1fms jitter=%.1fms loss=%d/%d connect=%.1fs ip=%s",
 				r.Server, r.AvgMs, r.JitterMs, r.ProbeLoss, r.Samples, r.ConnectTime, r.ExitIP)
@@ -426,83 +424,9 @@ func worker(ctx context.Context, todo []Server, prev []Result, ch chan<- tea.Msg
 	}
 
 	_ = cliClient().Disconnect(context.Background())
-	writeReports(all)
+	report.WriteReports(*outDir, all)
 	flog("INFO", "==== run finished: %d results ====", len(all))
 	emit(finishedMsg{All: all})
-}
-
-// ======================================================================
-// persistence / reports
-// ======================================================================
-
-func appendJSONL(path string, r Result) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	b, _ := json.Marshal(r)
-	f.Write(append(b, '\n'))
-}
-
-func loadJSONL(path string) []Result {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
-	var out []Result
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 1<<20), 1<<20)
-	for sc.Scan() {
-		var r Result
-		if json.Unmarshal(sc.Bytes(), &r) == nil {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
-func rankStable(all []Result) []Result {
-	var st []Result
-	for _, r := range all {
-		if r.Stable {
-			st = append(st, r)
-		}
-	}
-	sort.Slice(st, func(i, j int) bool { return st[i].Score < st[j].Score })
-	return st
-}
-
-func writeReports(all []Result) {
-	stable := rankStable(all)
-
-	var sb, names strings.Builder
-	fmt.Fprintf(&sb, "%-4s %-30s %8s %8s %8s %8s  %s\n", "#", "SERVER", "AVG(ms)", "JIT(ms)", "MAX(ms)", "CONN(s)", "EXIT IP")
-	for i, r := range stable {
-		fmt.Fprintf(&sb, "%-4d %-30s %8.1f %8.1f %8.1f %8.1f  %s\n",
-			i+1, r.Server, r.AvgMs, r.JitterMs, r.MaxMs, r.ConnectTime, r.ExitIP)
-		fmt.Fprintln(&names, r.Server)
-	}
-	os.WriteFile(filepath.Join(*outDir, "stable_servers.txt"), []byte(sb.String()), 0o644)
-	os.WriteFile(filepath.Join(*outDir, "stable_names.txt"), []byte(names.String()), 0o644)
-
-	j, _ := json.MarshalIndent(all, "", "  ")
-	os.WriteFile(filepath.Join(*outDir, "results.json"), j, 0o644)
-
-	if f, err := os.Create(filepath.Join(*outDir, "results.csv")); err == nil {
-		w := csv.NewWriter(f)
-		w.Write([]string{"server", "stable", "category", "reason", "attempts", "connect_s", "exit_ip",
-			"samples", "probe_loss", "min_ms", "avg_ms", "max_ms", "jitter_ms", "score"})
-		for _, r := range all {
-			w.Write([]string{r.Server, fmt.Sprint(r.Stable), r.Category, r.Reason, fmt.Sprint(r.Attempts),
-				fmt.Sprintf("%.1f", r.ConnectTime), r.ExitIP, fmt.Sprint(r.Samples), fmt.Sprint(r.ProbeLoss),
-				fmt.Sprintf("%.1f", r.MinMs), fmt.Sprintf("%.1f", r.AvgMs), fmt.Sprintf("%.1f", r.MaxMs),
-				fmt.Sprintf("%.1f", r.JitterMs), fmt.Sprintf("%.1f", r.Score)})
-		}
-		w.Flush()
-		f.Close()
-	}
 }
 
 // ======================================================================
@@ -854,7 +778,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case finishedMsg:
 		m.results = msg.All
-		m.rank = rankStable(m.results)
+		m.rank = report.RankStable(m.results)
 		m.rcur, m.rtop = 0, 0
 		m.stage = stDone
 		m.stopping = false
@@ -1394,7 +1318,7 @@ func main() {
 	jsonl := filepath.Join(*outDir, "results.jsonl")
 	var prev []Result
 	if *resume {
-		prev = loadJSONL(jsonl)
+		prev = report.LoadJSONL(jsonl)
 	} else {
 		os.Remove(jsonl)
 	}
