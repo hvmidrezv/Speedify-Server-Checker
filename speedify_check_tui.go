@@ -32,6 +32,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	// Aliased because this file declares its own Bubble Tea "model"
+	// struct; the alias disappears when the UI moves to internal/tui.
+	domain "speedify-check/internal/model"
 )
 
 // ======================================================================
@@ -170,40 +174,18 @@ var spinFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"
 // data
 // ======================================================================
 
-type Server struct {
-	Country string `json:"country"`
-	City    string `json:"city"`
-	Num     int    `json:"num"`
-}
+// Server and Result are aliases for the domain types that now live in
+// the model package. The aliases keep this file compiling unchanged
+// until the UI is moved into internal/tui.
+type (
+	Server = domain.Server
+	Result = domain.Result
+)
 
-func (s Server) Name() string { return fmt.Sprintf("%s-%s-%d", s.Country, s.City, s.Num) }
-
-type Result struct {
-	Server      string    `json:"server"`
-	Country     string    `json:"country"`
-	City        string    `json:"city"`
-	Num         int       `json:"num"`
-	Stable      bool      `json:"stable"`
-	Category    string    `json:"category,omitempty"` // connect_timeout | dropped | loss | ok
-	Reason      string    `json:"reason,omitempty"`
-	Attempts    int       `json:"attempts"`
-	ConnectTime float64   `json:"connect_time_s"`
-	ExitIP      string    `json:"exit_ip,omitempty"`
-	Samples     int       `json:"samples"`
-	ProbeLoss   int       `json:"probe_loss"`
-	MinMs       float64   `json:"min_ms"`
-	AvgMs       float64   `json:"avg_ms"`
-	MaxMs       float64   `json:"max_ms"`
-	JitterMs    float64   `json:"jitter_ms"`
-	Score       float64   `json:"score"` // lower is better
-	TestedAt    time.Time `json:"tested_at"`
-}
-
+// country is one row of the country selection menu: a model.Country
+// grouping plus its selection state.
 type country struct {
-	Code     string
-	Name     string
-	Flag     string
-	Servers  []Server
+	domain.Country
 	Selected bool
 }
 
@@ -250,7 +232,7 @@ func buildCountries(sv []Server) []country {
 		code := strings.ToLower(s.Country)
 		c, ok := m[code]
 		if !ok {
-			c = &country{Code: code, Name: countryName(code), Flag: flagEmoji(code)}
+			c = &country{Country: domain.Country{Code: code, Name: countryName(code), Flag: flagEmoji(code)}}
 			m[code] = c
 		}
 		c.Servers = append(c.Servers, s)

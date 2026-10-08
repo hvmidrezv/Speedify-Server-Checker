@@ -1,0 +1,25 @@
+run:
+  timeout: 3m
+
+linters:
+  disable-all: true
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - ineffassign
+    - unused
+    - gofmt
+    - revive
+
+linters-settings:
+  revive:
+    # Enforce doc comments on exported identifiers; stuttering is left to
+    # the reader since package names already provide the prefix.
+    rules:
+      - name: exported
+        arguments:
+          - disableStutteringCheck
+
+issues:
+  exclude-use-default: false
