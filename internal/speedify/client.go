@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"speedify-check/internal/model"
+	"github.com/hvmidrezv/Speedify-Server-Checker/internal/model"
 )
 
 // Timeouts applied by the typed client methods, matching the ones the
@@ -117,9 +117,11 @@ func (c *Client) Disconnect(ctx context.Context) error {
 }
 
 // ForceDisconnect is the best-effort disconnect used when the user
-// forces the TUI to quit mid-run: it has no timeout and ignores errors.
+// forces the TUI to quit mid-run: it uses a 5-second timeout and ignores errors.
 func (c *Client) ForceDisconnect() {
-	_, _ = c.runner.Run(context.Background(), "disconnect")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _ = c.runner.Run(ctx, "disconnect")
 }
 
 // parseServers understands the output of "show servers": an object

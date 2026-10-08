@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"speedify-check/internal/model"
+	"github.com/hvmidrezv/Speedify-Server-Checker/internal/model"
 )
 
 func TestParseServers(t *testing.T) {
@@ -209,5 +209,20 @@ func TestClientDisconnect(t *testing.T) {
 	}
 	if !reflect.DeepEqual(fr.calls[0], []string{"disconnect"}) {
 		t.Errorf("unexpected args: %v", fr.calls[0])
+	}
+}
+
+func TestClientForceDisconnect(t *testing.T) {
+	fr := &fakeRunner{}
+	NewClient(fr).ForceDisconnect()
+	if len(fr.calls) != 1 || !reflect.DeepEqual(fr.calls[0], []string{"disconnect"}) {
+		t.Errorf("unexpected args: %v", fr.calls)
+	}
+	deadline, ok := fr.ctxs[0].Deadline()
+	if !ok {
+		t.Fatal("ForceDisconnect did not set a deadline on context")
+	}
+	if d := time.Until(deadline); d <= 0 || d > 5*time.Second {
+		t.Errorf("unexpected deadline lead time: %v", d)
 	}
 }

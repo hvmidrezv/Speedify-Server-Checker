@@ -12,9 +12,25 @@ results.csv
 stable_servers.txt
 stable_names.txt
 speedify_check.log
+*.log
 
-# editor / OS junk
+# environment & secrets
+.env
+.env.*
+*.pem
+*.key
+*.crt
+
+# editor / IDE / OS junk
+.vscode/
+.idea/
+*.iml
 .DS_Store
 *.swp
 *~
 *:Zone.Identifier
+
+# test coverage
+coverage.out
+coverage.html
+

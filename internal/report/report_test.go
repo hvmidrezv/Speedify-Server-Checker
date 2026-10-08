@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"speedify-check/internal/model"
+	"github.com/hvmidrezv/Speedify-Server-Checker/internal/model"
 )
 
 func TestJSONLRoundTrip(t *testing.T) {

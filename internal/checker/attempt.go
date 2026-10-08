@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"speedify-check/internal/model"
-	"speedify-check/internal/probe"
+	"github.com/hvmidrezv/Speedify-Server-Checker/internal/model"
+	"github.com/hvmidrezv/Speedify-Server-Checker/internal/probe"
 )
 
 // attempt performs a single connect + hold cycle for s.

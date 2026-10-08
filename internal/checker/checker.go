@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"time"
 
-	"speedify-check/internal/model"
+	"github.com/hvmidrezv/Speedify-Server-Checker/internal/model"
 )
 
 // DefaultPollInterval and DefaultRetryDelay mirror the hard-coded

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"speedify-check/internal/model"
+	"github.com/hvmidrezv/Speedify-Server-Checker/internal/model"
 )
 
 // fakeCLI answers State from a per-Connect script; the last entry of a

@@ -17,7 +17,7 @@ import (
 	"sort"
 	"strings"
 
-	"speedify-check/internal/model"
+	"github.com/hvmidrezv/Speedify-Server-Checker/internal/model"
 )
 
 // AppendJSONL appends r as one JSON line to the journal at path,

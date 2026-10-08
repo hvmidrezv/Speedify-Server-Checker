@@ -6,8 +6,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"speedify-check/internal/model"
-	"speedify-check/internal/report"
+	"github.com/hvmidrezv/Speedify-Server-Checker/internal/model"
+	"github.com/hvmidrezv/Speedify-Server-Checker/internal/report"
 )
 
 // ======================================================================

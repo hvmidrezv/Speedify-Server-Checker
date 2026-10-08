@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"speedify-check/internal/config"
+	"github.com/hvmidrezv/Speedify-Server-Checker/internal/config"
 )
 
 // step feeds one message to the model and returns the updated model.

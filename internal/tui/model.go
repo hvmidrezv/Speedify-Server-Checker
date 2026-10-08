@@ -11,14 +11,14 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"speedify-check/internal/checker"
-	"speedify-check/internal/config"
-	"speedify-check/internal/geo"
-	"speedify-check/internal/logx"
-	"speedify-check/internal/model"
-	"speedify-check/internal/probe"
-	"speedify-check/internal/report"
-	"speedify-check/internal/speedify"
+	"github.com/hvmidrezv/Speedify-Server-Checker/internal/checker"
+	"github.com/hvmidrezv/Speedify-Server-Checker/internal/config"
+	"github.com/hvmidrezv/Speedify-Server-Checker/internal/geo"
+	"github.com/hvmidrezv/Speedify-Server-Checker/internal/logx"
+	"github.com/hvmidrezv/Speedify-Server-Checker/internal/model"
+	"github.com/hvmidrezv/Speedify-Server-Checker/internal/probe"
+	"github.com/hvmidrezv/Speedify-Server-Checker/internal/report"
+	"github.com/hvmidrezv/Speedify-Server-Checker/internal/speedify"
 )
 
 // ======================================================================

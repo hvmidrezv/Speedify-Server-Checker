@@ -1,4 +1,4 @@
-module speedify-check
+module github.com/hvmidrezv/Speedify-Server-Checker
 
 go 1.22
 
