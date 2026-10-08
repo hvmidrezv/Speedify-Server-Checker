@@ -27,6 +27,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"speedify-check/internal/checker"
 	"speedify-check/internal/geo"
 	"speedify-check/internal/logx"
 	// Aliased because this file declares its own Bubble Tea "model"
@@ -215,11 +216,6 @@ func buildCountries(sv []Server) []country {
 // opened) it is nil and logging is a no-op.
 var appLog *logx.Logger
 
-// flog writes one leveled line to the run log.
-func flog(level, format string, a ...any) {
-	appLog.Logf(level, format, a...)
-}
-
 // ======================================================================
 // speedify cli helpers
 // ======================================================================
@@ -230,34 +226,8 @@ func cliClient() *speedify.Client {
 	return speedify.NewClient(speedify.NewExecRunner(*cliPath))
 }
 
-func sleepCtx(ctx context.Context, d time.Duration) bool {
-	select {
-	case <-time.After(d):
-		return true
-	case <-ctx.Done():
-		return false
-	}
-}
-
-func getState(ctx context.Context) string {
-	return cliClient().State(ctx)
-}
-
-func getExitIP(ctx context.Context) string {
-	return cliClient().CurrentServer(ctx)
-}
-
 func getServers(ctx context.Context) ([]Server, error) {
 	return cliClient().Servers(ctx)
-}
-
-// ======================================================================
-// probing & stats
-// ======================================================================
-
-// tcpProbe dials the probe target once through the current tunnel.
-func tcpProbe() (time.Duration, bool) {
-	return probe.NewTCP(*probeAddr, *probeTimeout).Probe(context.Background())
 }
 
 // ======================================================================
@@ -270,164 +240,16 @@ type checkMsg struct {
 	Err      string
 	Servers  []Server
 }
-type logMsg struct{ Kind, Text string }
-type phaseMsg struct {
-	Phase       string // connecting | holding
-	ConnectTime float64
-	IP          string
-}
-type sampleMsg struct {
-	N       int
-	StateOK bool
-	ProbeOK bool
-	State   string
-	RTT     float64
-}
-type serverStartMsg struct {
-	Idx, Total int
-	Name       string
-}
-type serverDoneMsg struct{ R Result }
-type finishedMsg struct{ All []Result }
+
+// eventMsg wraps one event from the checker engine so Bubble Tea can
+// deliver it through the update loop.
+type eventMsg struct{ ev domain.Event }
+
 type connectedMsg struct {
 	Name string
 	Err  error
 }
 type disconnectedMsg struct{ Err error }
-
-// ======================================================================
-// worker (runs the tests in the background and streams events to the UI)
-// ======================================================================
-
-func attempt(ctx context.Context, s Server, emit func(tea.Msg)) Result {
-	r := Result{Server: s.Name(), Country: s.Country, City: s.City, Num: s.Num, TestedAt: time.Now()}
-
-	emit(phaseMsg{Phase: "connecting"})
-	flog("DEBUG", "%s: connecting", r.Server)
-	_ = cliClient().Connect(ctx, s)
-
-	start := time.Now()
-	last := ""
-	connected := false
-	for time.Since(start) < *connectTimeout {
-		if ctx.Err() != nil {
-			r.Category, r.Reason = "cancelled", "cancelled"
-			return r
-		}
-		last = getState(ctx)
-		if last == "CONNECTED" {
-			connected = true
-			break
-		}
-		sleepCtx(ctx, 500*time.Millisecond)
-	}
-	if !connected {
-		r.Category = "connect_timeout"
-		r.Reason = fmt.Sprintf("connect timeout (last state: %s)", last)
-		flog("FAIL", "%s: %s", r.Server, r.Reason)
-		return r
-	}
-	r.ConnectTime = time.Since(start).Seconds()
-	r.ExitIP = getExitIP(ctx)
-	flog("DEBUG", "%s: connected in %.1fs, exit ip %s", r.Server, r.ConnectTime, r.ExitIP)
-	emit(phaseMsg{Phase: "holding", ConnectTime: r.ConnectTime, IP: r.ExitIP})
-
-	var rtts []float64
-	holdStart := time.Now()
-	for time.Since(holdStart) < *hold {
-		if !sleepCtx(ctx, *interval) {
-			r.Category, r.Reason = "cancelled", "cancelled"
-			return r
-		}
-		r.Samples++
-		el := time.Since(holdStart).Seconds()
-
-		st := getState(ctx)
-		if st != "CONNECTED" {
-			flog("DEBUG", "%s: t=%.1fs state=%s (dropped)", r.Server, el, st)
-			emit(sampleMsg{N: r.Samples, StateOK: false, State: st})
-			r.Category = "dropped"
-			r.Reason = fmt.Sprintf("dropped to %s at %.1fs", st, el)
-			break
-		}
-		d, ok := tcpProbe()
-		if ok {
-			ms := float64(d.Microseconds()) / 1000
-			rtts = append(rtts, ms)
-			flog("DEBUG", "%s: t=%.1fs state=CONNECTED rtt=%.1fms", r.Server, el, ms)
-			emit(sampleMsg{N: r.Samples, StateOK: true, ProbeOK: true, RTT: ms})
-		} else {
-			r.ProbeLoss++
-			flog("DEBUG", "%s: t=%.1fs state=CONNECTED probe FAILED", r.Server, el)
-			emit(sampleMsg{N: r.Samples, StateOK: true, ProbeOK: false})
-		}
-	}
-
-	r.MinMs, r.AvgMs, r.MaxMs, r.JitterMs = probe.Stats(rtts)
-
-	if r.Reason == "" && r.ProbeLoss > *maxLoss {
-		r.Category = "loss"
-		r.Reason = fmt.Sprintf("traffic loss: %d/%d probes failed", r.ProbeLoss, r.Samples)
-	}
-	if r.Reason == "" {
-		r.Stable = true
-		r.Category = "ok"
-		r.Score = r.AvgMs + 2*r.JitterMs + 20*r.ConnectTime
-	}
-	return r
-}
-
-func testServer(ctx context.Context, s Server, emit func(tea.Msg)) Result {
-	var r Result
-	for n := 1; n <= 1+*retries; n++ {
-		r = attempt(ctx, s, emit)
-		r.Attempts = n
-		_ = cliClient().Disconnect(context.Background())
-		if r.Stable || ctx.Err() != nil {
-			return r
-		}
-		if n <= *retries {
-			emit(logMsg{Kind: "warn", Text: fmt.Sprintf("%s  retry %d/%d · %s", s.Name(), n, *retries, r.Reason)})
-			sleepCtx(ctx, 2*time.Second)
-		}
-	}
-	return r
-}
-
-func worker(ctx context.Context, todo []Server, prev []Result, ch chan<- tea.Msg) {
-	emit := func(m tea.Msg) { ch <- m }
-	all := append([]Result{}, prev...)
-	jsonl := filepath.Join(*outDir, "results.jsonl")
-
-	flog("INFO", "==== run started: %d servers, hold=%s, probe=%s, max-loss=%d, retries=%d ====",
-		len(todo), *hold, *probeAddr, *maxLoss, *retries)
-
-	for i, s := range todo {
-		if ctx.Err() != nil {
-			break
-		}
-		emit(serverStartMsg{Idx: i + 1, Total: len(todo), Name: s.Name()})
-		r := testServer(ctx, s, emit)
-		if ctx.Err() != nil {
-			break
-		}
-		all = append(all, r)
-		report.AppendJSONL(jsonl, r)
-		if r.Stable {
-			flog("OK", "%s STABLE avg=%.1fms jitter=%.1fms loss=%d/%d connect=%.1fs ip=%s",
-				r.Server, r.AvgMs, r.JitterMs, r.ProbeLoss, r.Samples, r.ConnectTime, r.ExitIP)
-		} else {
-			flog("FAIL", "%s UNSTABLE: %s", r.Server, r.Reason)
-		}
-		emit(serverDoneMsg{R: r})
-		sleepCtx(ctx, *pause)
-	}
-
-	_ = cliClient().Disconnect(context.Background())
-	report.WriteReports(*outDir, all)
-	flog("INFO", "==== run finished: %d results ====", len(all))
-	emit(finishedMsg{All: all})
-}
 
 // ======================================================================
 // model
@@ -469,7 +291,7 @@ type model struct {
 	prev         []Result
 	results      []Result
 	cancel       context.CancelFunc
-	events       chan tea.Msg
+	events       chan domain.Event
 	stopping     bool
 	startAt      time.Time
 	totalN       int
@@ -482,7 +304,7 @@ type model struct {
 	curStart     time.Time
 	curConnT     float64
 	curIP        string
-	samples      []sampleMsg
+	samples      []domain.SampleEvent
 	totalSamples int
 	logs         []logEntry
 
@@ -522,8 +344,10 @@ func checkCmd() tea.Cmd {
 	}
 }
 
-func waitEvent(ch <-chan tea.Msg) tea.Cmd {
-	return func() tea.Msg { return <-ch }
+// waitEvent blocks until the next engine event arrives and wraps it
+// as a Bubble Tea message.
+func waitEvent(ch <-chan domain.Event) tea.Cmd {
+	return func() tea.Msg { return eventMsg{<-ch} }
 }
 
 func connectCmd(r Result) tea.Cmd {
@@ -677,7 +501,7 @@ func (m *model) startRun() tea.Cmd {
 		return nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	ch := make(chan tea.Msg, 256)
+	ch := make(chan domain.Event, 256)
 
 	m.cancel = cancel
 	m.events = ch
@@ -695,8 +519,39 @@ func (m *model) startRun() tea.Cmd {
 	m.results = append([]Result{}, m.prev...)
 	m.addLog(accent("●"), fmt.Sprintf("Run started · %d servers", len(todo)))
 
-	go worker(ctx, todo, m.prev, ch)
+	eng := checker.New(engineConfig(), cliClient(),
+		probe.NewTCP(*probeAddr, *probeTimeout), fileRecorder{dir: *outDir}, appLog)
+	go eng.Run(ctx, todo, m.prev, func(ev domain.Event) { ch <- ev })
 	return waitEvent(ch)
+}
+
+// engineConfig maps the flag values onto the checker engine knobs,
+// keeping the hard-coded timings of the original program (500ms state
+// polling, 2s retry delay).
+func engineConfig() checker.Config {
+	return checker.Config{
+		ConnectTimeout: *connectTimeout,
+		Hold:           *hold,
+		Interval:       *interval,
+		MaxLoss:        *maxLoss,
+		Retries:        *retries,
+		Pause:          *pause,
+		PollInterval:   checker.DefaultPollInterval,
+		RetryDelay:     checker.DefaultRetryDelay,
+		ProbeAddr:      *probeAddr,
+	}
+}
+
+// fileRecorder persists results through the report package: one jsonl
+// line per finished server, full reports when the run ends.
+type fileRecorder struct{ dir string }
+
+func (rec fileRecorder) Record(r Result) {
+	report.AppendJSONL(filepath.Join(rec.dir, "results.jsonl"), r)
+}
+
+func (rec fileRecorder) Finalize(all []Result) {
+	report.WriteReports(rec.dir, all)
 }
 
 // ======================================================================
@@ -729,61 +584,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.onKey(msg)
 
-	// ----- events from the worker -----
-	case logMsg:
-		icon := warnS("↻")
-		m.addLog(icon, warnS(msg.Text))
-		return m, waitEvent(m.events)
-
-	case serverStartMsg:
-		m.curName = msg.Name
-		m.curPhase = "connecting"
-		m.curStart = time.Now()
-		m.samples = nil
-		m.curConnT, m.curIP = 0, ""
-		m.addLog(dimS("▶"), dimS(fmt.Sprintf("%s  (%d/%d)", msg.Name, msg.Idx, msg.Total)))
-		return m, waitEvent(m.events)
-
-	case phaseMsg:
-		m.curPhase = msg.Phase
-		if msg.Phase == "connecting" {
-			m.curStart = time.Now()
-			m.samples = nil
-		} else {
-			m.curConnT = msg.ConnectTime
-			m.curIP = msg.IP
-		}
-		return m, waitEvent(m.events)
-
-	case sampleMsg:
-		m.samples = append(m.samples, msg)
-		return m, waitEvent(m.events)
-
-	case serverDoneMsg:
-		r := msg.R
-		m.results = append(m.results, r)
-		m.doneN++
-		if r.Stable {
-			m.runStable++
-			m.addLog(good("✔"), fmt.Sprintf("%s  %s",
-				goodBold(fmt.Sprintf("%-26s", r.Server)),
-				dimS(fmt.Sprintf("avg %.1fms · jitter %.1f · loss %d/%d · conn %.1fs",
-					r.AvgMs, r.JitterMs, r.ProbeLoss, r.Samples, r.ConnectTime))))
-		} else {
-			m.runFailed++
-			m.addLog(bad("✘"), fmt.Sprintf("%s  %s",
-				bad(fmt.Sprintf("%-26s", r.Server)), dimS(r.Reason)))
-		}
-		return m, waitEvent(m.events)
-
-	case finishedMsg:
-		m.results = msg.All
-		m.rank = report.RankStable(m.results)
-		m.rcur, m.rtop = 0, 0
-		m.stage = stDone
-		m.stopping = false
-		m.status = ""
-		return m, nil
+	// ----- events from the checker engine -----
+	case eventMsg:
+		return m.onEvent(msg.ev)
 
 	case connectedMsg:
 		if msg.Err != nil {
@@ -799,6 +602,67 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.status = dimS("Disconnected")
 		}
+		return m, nil
+	}
+	return m, nil
+}
+
+// onEvent adapts one checker engine event to UI state and keeps the
+// engine event loop running by re-arming the wait command.
+func (m model) onEvent(ev domain.Event) (tea.Model, tea.Cmd) {
+	switch ev := ev.(type) {
+	case domain.LogEvent:
+		m.addLog(warnS("↻"), warnS(ev.Text))
+		return m, waitEvent(m.events)
+
+	case domain.ServerStartEvent:
+		m.curName = ev.Name
+		m.curPhase = "connecting"
+		m.curStart = time.Now()
+		m.samples = nil
+		m.curConnT, m.curIP = 0, ""
+		m.addLog(dimS("▶"), dimS(fmt.Sprintf("%s  (%d/%d)", ev.Name, ev.Idx, ev.Total)))
+		return m, waitEvent(m.events)
+
+	case domain.PhaseEvent:
+		m.curPhase = ev.Phase
+		if ev.Phase == "connecting" {
+			m.curStart = time.Now()
+			m.samples = nil
+		} else {
+			m.curConnT = ev.ConnectTime
+			m.curIP = ev.IP
+		}
+		return m, waitEvent(m.events)
+
+	case domain.SampleEvent:
+		m.samples = append(m.samples, ev)
+		return m, waitEvent(m.events)
+
+	case domain.ServerDoneEvent:
+		r := ev.Result
+		m.results = append(m.results, r)
+		m.doneN++
+		if r.Stable {
+			m.runStable++
+			m.addLog(good("✔"), fmt.Sprintf("%s  %s",
+				goodBold(fmt.Sprintf("%-26s", r.Server)),
+				dimS(fmt.Sprintf("avg %.1fms · jitter %.1f · loss %d/%d · conn %.1fs",
+					r.AvgMs, r.JitterMs, r.ProbeLoss, r.Samples, r.ConnectTime))))
+		} else {
+			m.runFailed++
+			m.addLog(bad("✘"), fmt.Sprintf("%s  %s",
+				bad(fmt.Sprintf("%-26s", r.Server)), dimS(r.Reason)))
+		}
+		return m, waitEvent(m.events)
+
+	case domain.FinishedEvent:
+		m.results = ev.All
+		m.rank = report.RankStable(m.results)
+		m.rcur, m.rtop = 0, 0
+		m.stage = stDone
+		m.stopping = false
+		m.status = ""
 		return m, nil
 	}
 	return m, nil
