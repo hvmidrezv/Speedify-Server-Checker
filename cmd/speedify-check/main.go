@@ -29,7 +29,7 @@ func main() {
 	var lg *logx.Logger
 	if l, err := logx.Open(filepath.Join(cfg.OutDir, "speedify_check.log")); err == nil {
 		lg = l
-		defer l.Close()
+		defer func() { _ = l.Close() }()
 	}
 
 	jsonl := filepath.Join(cfg.OutDir, "results.jsonl")

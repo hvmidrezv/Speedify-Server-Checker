@@ -25,12 +25,13 @@ import (
 // data
 // ======================================================================
 
-// Server and Result are aliases for the domain types shared with the
-// other packages; they keep this package's code terse.
-type (
-	Server = model.Server
-	Result = model.Result
-)
+// Server is an alias for model.Server, shared with the other
+// packages; it keeps this package's code terse.
+type Server = model.Server
+
+// Result is an alias for model.Result, shared with the other
+// packages; it keeps this package's code terse.
+type Result = model.Result
 
 // country is one row of the country selection menu: a model.Country
 // grouping plus its selection state.

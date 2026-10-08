@@ -37,14 +37,14 @@ func TestTCPProbeSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	go func() {
 		for {
 			c, err := ln.Accept()
 			if err != nil {
 				return
 			}
-			c.Close()
+			_ = c.Close()
 		}
 	}()
 
@@ -64,7 +64,7 @@ func TestTCPProbeFailure(t *testing.T) {
 		t.Fatalf("listen: %v", err)
 	}
 	addr := ln.Addr().String()
-	ln.Close() // nothing listens here anymore
+	_ = ln.Close() // nothing listens here anymore; failure is the point
 
 	p := NewTCP(addr, 200*time.Millisecond)
 	if _, ok := p.Probe(context.Background()); ok {

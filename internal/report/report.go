@@ -27,7 +27,7 @@ func AppendJSONL(path string, r model.Result) {
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	b, _ := json.Marshal(r)
 	_, _ = f.Write(append(b, '\n'))
 }
@@ -39,7 +39,7 @@ func LoadJSONL(path string) []model.Result {
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var out []model.Result
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
@@ -95,6 +95,6 @@ func WriteReports(dir string, all []model.Result) {
 				fmt.Sprintf("%.1f", r.JitterMs), fmt.Sprintf("%.1f", r.Score)})
 		}
 		w.Flush()
-		f.Close()
+		_ = f.Close()
 	}
 }

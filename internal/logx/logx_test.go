@@ -44,7 +44,7 @@ func TestOpenAppendsAndClose(t *testing.T) {
 		t.Fatalf("Open again: %v", err)
 	}
 	l2.Logf("FAIL", "second")
-	l2.Close()
+	_ = l2.Close()
 
 	data, err := os.ReadFile(path)
 	if err != nil {

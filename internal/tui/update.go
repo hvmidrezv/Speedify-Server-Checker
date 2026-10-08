@@ -126,6 +126,7 @@ func (m Model) onEvent(ev model.Event) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// View renders the current screen.
 func (m Model) View() string {
 	title := accentBold("⚡ Speedify Server Checker")
 	var body, help string

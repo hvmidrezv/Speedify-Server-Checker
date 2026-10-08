@@ -123,7 +123,7 @@ func TestWriteReports(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open results.csv: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	r := csv.NewReader(f)
 	records, err := r.ReadAll()
 	if err != nil {
